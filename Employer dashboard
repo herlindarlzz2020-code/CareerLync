@@ -1,17 +1,37 @@
-import React, { useEffect, useState } from "react";
-import { Button, Container, Row, Col, Card, Table, Modal, Form } from "react-bootstrap";
-import { BriefcaseFill, PencilSquare, PeopleFill, TrashFill, EyeFill } from "react-bootstrap-icons";
+import React, { useEffect, useMemo, useState } from "react";
+import { Button, Container, Row, Col, Card, Table, Modal, Form, Badge, Alert, Spinner, OverlayTrigger, Tooltip, Accordion } from "react-bootstrap";
+import { BriefcaseFill, PencilSquare, PeopleFill, TrashFill, EyeFill, BellFill, ArrowClockwise, ArrowRepeat } from "react-bootstrap-icons";
 import axios from "axios";
+import API_BASE_URL from "../apiConfig";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./Dashboard.css";
 
 
+const authHeader = () => {
+const token = localStorage.getItem("token");
+return token ? { Authorization: Bearer ${token} } : {};
+};
+
+
 const EmployerDashboard = () => {
 const [jobs, setJobs] = useState([]);
-const [showModal, setShowModal] = useState(false);
+const [loadingJobs, setLoadingJobs] = useState(false);
+
+
+const [showJobModal, setShowJobModal] = useState(false);
 const [editingJob, setEditingJob] = useState(null);
+
+
 const [applications, setApplications] = useState([]);
 const [showApplications, setShowApplications] = useState(false);
+const [loadingApps, setLoadingApps] = useState(false);
+
+
+const [notifications, setNotifications] = useState([]);
+const unreadCount = useMemo(() => (notifications || []).filter(n => !n.read && n.isRead !== true).length, [notifications]);
+
+
+const [appCounts, setAppCounts] = useState({}); // { jobId: count }
 
 
 const [formData, setFormData] = useState({
@@ -19,90 +39,179 @@ title: "",
 description: "",
 location: "",
 salary: "",
+jobCode: "",
+applicationInstructions: "",
+expiryDate: "", // ISO string (yyyy-mm-dd)
 });
 
 
 // Fetch jobs posted by employer
 useEffect(() => {
 fetchJobs();
+fetchNotifications();
+// Optional: poll notifications every 30s
+const id = setInterval(fetchNotifications, 30000);
+return () => clearInterval(id);
 }, []);
 
 
 const fetchJobs = async () => {
+setLoadingJobs(true);
 try {
-const res = await axios.get("http://localhost:5000/api/Job");
-setJobs(res.data);
+const res = await axios.get(${API_BASE_URL}/api/Job, { headers: authHeader() });
+setJobs(Array.isArray(res.data) ? res.data : []);
 } catch (err) {
 console.error("Error fetching jobs", err);
+} finally {
+setLoadingJobs(false);
 }
 };
 
 
-const handleShowModal = (job = null) => {
+const fetchNotifications = async () => {
+try {
+// Try unread endpoint first, fallback to all notifications
+let res;
+try {
+res = await axios.get(${API_BASE_URL}/api/Notification/unread, { headers: authHeader() });
+} catch {
+res = await axios.get(${API_BASE_URL}/api/Notification, { headers: authHeader() });
+}
+setNotifications(Array.isArray(res.data) ? res.data : []);
+} catch (e) {
+// Silent fail – notifications are optional
+console.warn("Notifications unavailable", e?.response?.status || e.message);
+}
+};
+
+
+const handleOpenJobModal = (job = null) => {
 if (job) {
 setEditingJob(job);
-setFormData({ ...job });
+setFormData({
+title: job.title || "",
+description: job.description || "",
+location: job.location || "",
+salary: job.salary || "",
+jobCode: job.jobCode || job.code || "",
+applicationInstructions: job.applicationInstructions || "",
+expiryDate: job.expiryDate ? job.expiryDate.substring(0, 10) : "",
+});
 } else {
 setEditingJob(null);
-setFormData({ title: "", description: "", location: "", salary: "" });
+setFormData({ title: "", description: "", location: "", salary: "", jobCode: "", applicationInstructions: "", expiryDate: "" });
 }
-setShowModal(true);
+setShowJobModal(true);
 };
 
 
-const handleCloseModal = () => setShowModal(false);
+const handleCloseJobModal = () => setShowJobModal(false);
 
 
 const handleChange = (e) => {
-setFormData({ ...formData, [e.target.name]: e.target.value });
+const { name, value } = e.target;
+setFormData((prev) => ({ ...prev, [name]: value }));
 };
 
 
-const handleSubmit = async () => {
+const handleSaveJob = async () => {
 try {
-if (editingJob) {
-await axios.put(http://localhost:5000/api/Job/${editingJob.id}, formData);
-} else {
-await axios.post("http://localhost:5000/api/Job", formData);
+const payload = { ...formData };
+if (!payload.expiryDate) {
+// default: 30 days from now
+const d = new Date();
+d.setDate(d.getDate() + 30);
+payload.expiryDate = d.toISOString();
 }
-fetchJobs();
-handleCloseModal();
+if (editingJob?.id) {
+await axios.put(${API_BASE_URL}/api/Job/${editingJob.id}, payload, { headers: authHeader() });
+} else {
+await axios.post(${API_BASE_URL}/api/Job, payload, { headers: authHeader() });
+}
+await fetchJobs();
+handleCloseJobModal();
 } catch (err) {
 console.error("Error saving job", err);
+alert("Failed to save job. Check console.");
 }
 };
 
 
-const handleDelete = async (id) => {
+const handleDeleteJob = async (id) => {
+if (!window.confirm("Delete this job?")) return;
 try {
-await axios.delete(http://localhost:5000/api/Job/${id});
+await axios.delete(${API_BASE_URL}/api/Job/${id}, { headers: authHeader() });
 fetchJobs();
 } catch (err) {
 console.error("Error deleting job", err);
+alert("Failed to delete job.");
 }
 };
 
 
 const handleViewApplications = async (jobId) => {
+setLoadingApps(true);
 try {
-const res = await axios.get(http://localhost:5000/api/Application/job/${jobId});
-setApplications(res.data);
+const res = await axios.get(${API_BASE_URL}/api/Application/job/${jobId}, { headers: authHeader() });
+const list = Array.isArray(res.data) ? res.data : [];
+setApplications(list);
+setAppCounts((m) => ({ ...m, [jobId]: list.length }));
 setShowApplications(true);
 } catch (err) {
 console.error("Error fetching applications", err);
+setApplications([]);
+setShowApplications(true);
+} finally {
+setLoadingApps(false);
 }
 };
 
 
 const handleStatusChange = async (appId, newStatus) => {
 try {
-await axios.put(http://localhost:5000/api/Application/${appId}, { status: newStatus });
-// Update applications list after status change
-setApplications((prev) =>
-prev.map((app) => (app.id === appId ? { ...app, status: newStatus } : app))
-);
+await axios.put(${API_BASE_URL}/api/Application/${appId}, { status: newStatus }, { headers: authHeader() });
+setApplications((prev) => prev.map((a) => (a.id === appId ? { ...a, status: newStatus } : a)));
 } catch (err) {
 console.error("Error updating status", err);
+alert("Failed to update status");
+}
+};
+
+
+const [profileCache, setProfileCache] = useState({}); // { userId: profile }
+const fetchProfile = async (userId) => {
+if (!userId) return null;
+if (profileCache[userId]) return profileCache[userId];
+try {
+const res = await axios.get(${API_BASE_URL}/api/JobSeekers/${userId}, { headers: authHeader() });
+const data = res.data || null;
+setProfileCache((c) => ({ ...c, [userId]: data }));
+return data;
+} catch (e) {
+console.warn("Profile not found for", userId);
+return null;
+}
+};
+
+
+const isExpired = (job) => {
+if (!job?.expiryDate) return false;
+const now = new Date();
+const exp = new Date(job.expiryDate);
+return exp < now;
+};
+
+
+const handleRepublish = async (job) => {
+try {
+const newDate = new Date();
+newDate.setDate(newDate.getDate() + 30);
+const payload = { ...job, expiryDate: newDate.toISOString() };
+await axios.put(${API_BASE_URL}/api/Job/${job.id}, payload, { headers: authHeader() });
+fetchJobs();
+} catch (e) {
+console.error("Failed to republish", e);
+alert("Failed to republish job");
 }
 };
 
@@ -112,57 +221,120 @@ return (
 
 
 
+
+
 Employer Dashboard
 
 
+ Notifications
+{unreadCount > 0 && (
 
-    {/* Dashboard Actions */}
+{unreadCount}
+
+)}
+
+
+
+
+
+    {/* Quick Actions */}
     <Row className="g-4 mb-4">
       <Col md={4}>
         <Card className="dashboard-card shadow-sm text-center p-4">
           <BriefcaseFill size={40} className="mb-3 text-primary" />
           <h4>Post a Job</h4>
           <p>Create and publish new job listings to attract talent.</p>
-          <Button variant="primary" onClick={() => handleShowModal()}>Post Job</Button>
+          <Button variant="primary" onClick={() => handleOpenJobModal()}>Post Job</Button>
+        </Card>
+      </Col>
+      <Col md={4}>
+        <Card className="dashboard-card shadow-sm text-center p-4">
+          <PeopleFill size={40} className="mb-3 text-primary" />
+          <h4>Applications</h4>
+          <p>Open any job to review and update applicant status.</p>
+          <Button variant="outline-primary" onClick={fetchJobs}><ArrowRepeat className="me-2"/>Refresh Jobs</Button>
+        </Card>
+      </Col>
+      <Col md={4}>
+        <Card className="dashboard-card shadow-sm text-center p-4">
+          <BellFill size={40} className="mb-3 text-primary" />
+          <h4>Notifications</h4>
+          <p>New applications & important alerts.</p>
+          <Button variant="outline-secondary" onClick={fetchNotifications}><ArrowClockwise className="me-2"/>Refresh</Button>
         </Card>
       </Col>
     </Row>
 
     {/* Jobs Table */}
-    <h3 className="mb-3">My Job Listings</h3>
-    <Table striped bordered hover>
+    <div className="d-flex align-items-center mb-2">
+      <h3 className="mb-0">My Job Listings</h3>
+      {loadingJobs && <Spinner animation="border" size="sm" className="ms-3"/>}
+    </div>
+    <Table striped bordered hover responsive>
       <thead>
         <tr>
           <th>Title</th>
           <th>Location</th>
           <th>Salary</th>
+          <th>Job Code</th>
+          <th>Expiry</th>
+          <th>Applications</th>
+          <th>Views</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {jobs.map((job) => (
-          <tr key={job.id}>
-            <td>{job.title}</td>
-            <td>{job.location}</td>
-            <td>{job.salary}</td>
-            <td>
-              <Button size="sm" variant="info" onClick={() => handleViewApplications(job.id)} className="me-2">
-                <PeopleFill /> Applications
-              </Button>
-              <Button size="sm" variant="warning" onClick={() => handleShowModal(job)} className="me-2">
-                <PencilSquare /> Edit
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => handleDelete(job.id)}>
-                <TrashFill /> Delete
-              </Button>
-            </td>
-          </tr>
-        ))}
+        {jobs.map((job) => {
+          const expired = isExpired(job);
+          return (
+            <tr key={job.id} className={expired ? "table-warning" : ""}>
+              <td>{job.title}</td>
+              <td>{job.location}</td>
+              <td>{job.salary}</td>
+              <td>{job.jobCode || job.code || "—"}</td>
+              <td>
+                {job.expiryDate ? (
+                  <span>
+                    {new Date(job.expiryDate).toLocaleDateString()} {expired && <Badge bg="warning" className="ms-2">Expired</Badge>}
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                {appCounts[job.id] ?? (
+                  <Button size="sm" variant="light" onClick={() => handleViewApplications(job.id)}>Load</Button>
+                )}
+              </td>
+              <td>{job.viewCount ?? job.views ?? "—"}</td>
+              <td>
+                <div className="d-flex flex-wrap gap-2">
+                  <Button size="sm" variant="info" onClick={() => handleViewApplications(job.id)}>
+                    <PeopleFill className="me-1"/> Applications
+                  </Button>
+                  <Button size="sm" variant="warning" onClick={() => handleOpenJobModal(job)}>
+                    <PencilSquare className="me-1"/> Edit
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => handleDeleteJob(job.id)}>
+                    <TrashFill className="me-1"/> Delete
+                  </Button>
+                  {expired && (
+                    <OverlayTrigger placement="top" overlay={<Tooltip>Extend expiry by 30 days</Tooltip>}>
+                      <Button size="sm" variant="outline-primary" onClick={() => handleRepublish(job)}>
+                        <ArrowRepeat className="me-1"/> Republish
+                      </Button>
+                    </OverlayTrigger>
+                  )}
+                </div>
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </Table>
 
     {/* Job Modal */}
-    <Modal show={showModal} onHide={handleCloseModal}>
+    <Modal show={showJobModal} onHide={handleCloseJobModal} backdrop="static">
       <Modal.Header closeButton>
         <Modal.Title>{editingJob ? "Edit Job" : "Post New Job"}</Modal.Title>
       </Modal.Header>
@@ -174,21 +346,45 @@ Employer Dashboard
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Description</Form.Label>
-            <Form.Control as="textarea" rows={3} name="description" value={formData.description} onChange={handleChange} />
+            <Form.Control as="textarea" rows={4} name="description" value={formData.description} onChange={handleChange} />
           </Form.Group>
-          <Form.Group className="mb-3">
-            <Form.Label>Location</Form.Label>
-            <Form.Control type="text" name="location" value={formData.location} onChange={handleChange} />
-          </Form.Group>
-          <Form.Group className="mb-3">
-            <Form.Label>Salary</Form.Label>
-            <Form.Control type="number" name="salary" value={formData.salary} onChange={handleChange} />
+          <Row>
+            <Col md={6}>
+              <Form.Group className="mb-3">
+                <Form.Label>Location</Form.Label>
+                <Form.Control type="text" name="location" value={formData.location} onChange={handleChange} />
+              </Form.Group>
+            </Col>
+            <Col md={6}>
+              <Form.Group className="mb-3">
+                <Form.Label>Salary</Form.Label>
+                <Form.Control type="number" name="salary" value={formData.salary} onChange={handleChange} />
+              </Form.Group>
+            </Col>
+          </Row>
+          <Row>
+            <Col md={6}>
+              <Form.Group className="mb-3">
+                <Form.Label>Job Code</Form.Label>
+                <Form.Control type="text" name="jobCode" value={formData.jobCode} onChange={handleChange} />
+              </Form.Group>
+            </Col>
+            <Col md={6}>
+              <Form.Group className="mb-3">
+                <Form.Label>Expiry Date</Form.Label>
+                <Form.Control type="date" name="expiryDate" value={formData.expiryDate} onChange={handleChange} />
+              </Form.Group>
+            </Col>
+          </Row>
+          <Form.Group className="mb-2">
+            <Form.Label>Application Instructions</Form.Label>
+            <Form.Control as="textarea" rows={3} name="applicationInstructions" value={formData.applicationInstructions} onChange={handleChange} />
           </Form.Group>
         </Form>
       </Modal.Body>
       <Modal.Footer>
-        <Button variant="secondary" onClick={handleCloseModal}>Cancel</Button>
-        <Button variant="primary" onClick={handleSubmit}>{editingJob ? "Update" : "Post"}</Button>
+        <Button variant="secondary" onClick={handleCloseJobModal}>Cancel</Button>
+        <Button variant="primary" onClick={handleSaveJob}>{editingJob ? "Update" : "Post"}</Button>
       </Modal.Footer>
     </Modal>
 
@@ -198,10 +394,12 @@ Employer Dashboard
         <Modal.Title>Applications</Modal.Title>
       </Modal.Header>
       <Modal.Body>
-        {applications.length === 0 ? (
-          <p>No applications yet.</p>
+        {loadingApps ? (
+          <div className="d-flex justify-content-center py-4"><Spinner animation="border"/></div>
+        ) : (applications.length === 0 ? (
+          <Alert variant="secondary">No applications yet.</Alert>
         ) : (
-          <Table bordered hover>
+          <Table bordered hover responsive>
             <thead>
               <tr>
                 <th>Name</th>
@@ -214,9 +412,9 @@ Employer Dashboard
             <tbody>
               {applications.map((app) => (
                 <tr key={app.id}>
-                  <td>{app.candidateName}</td>
-                  <td>{app.candidateEmail}</td>
-                  <td>{app.status}</td>
+                  <td>{app.candidateName || app.applicantName || "—"}</td>
+                  <td>{app.candidateEmail || app.applicantEmail || "—"}</td>
+                  <td><Badge bg="info">{app.status || "Applied"}</Badge></td>
                   <td>
                     {app.resumeUrl ? (
                       <a href={app.resumeUrl} target="_blank" rel="noreferrer">
@@ -226,23 +424,23 @@ Employer Dashboard
                       "No resume"
                     )}
                   </td>
-                  <td>
-                    <Form.Select
-                      size="sm"
-                      value={app.status}
-                      onChange={(e) => handleStatusChange(app.id, e.target.value)}
-                    >
-                      <option value="Applied">Applied</option>
-                      <option value="Shortlisted">Shortlisted</option>
-                      <option value="Rejected">Rejected</option>
-                      <option value="Hired">Hired</option>
-                    </Form.Select>
+                  <td style={{ minWidth: 220 }}>
+                    <div className="d-flex gap-2">
+                      <Form.Select size="sm" value={app.status || "Applied"} onChange={(e) => handleStatusChange(app.id, e.target.value)}>
+                        <option value="Applied">Applied</option>
+                        <option value="Shortlisted">Shortlisted</option>
+                        <option value="Rejected">Rejected</option>
+                        <option value="Hired">Hired</option>
+                      </Form.Select>
+                      {/* Candidate profile preview */}
+                      <ProfilePeek userId={app.candidateId || app.applicantId} fetchProfile={fetchProfile} />
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </Table>
-        )}
+        ))}
       </Modal.Body>
     </Modal>
   </Container>
@@ -254,7 +452,93 @@ Employer Dashboard
 };
 
 
+// Small inline component to preview candidate profile details
+const ProfilePeek = ({ userId, fetchProfile }) => {
+const [open, setOpen] = useState(false);
+const [loading, setLoading] = useState(false);
+const [profile, setProfile] = useState(null);
+
+
+const toggle = async () => {
+const toOpen = !open;
+setOpen(toOpen);
+if (toOpen && !profile) {
+setLoading(true);
+const data = await fetchProfile(userId);
+setProfile(data);
+setLoading(false);
+}
+};
+
+
+return (
+<>
+
+{open ? "Hide Profile" : "View Profile"}
+
+{open && (
+
+
+{loading ? (
+
+) : profile ? (
+
+
+
+
+Personal
+
+
+{profile.fullName || profile.name}
+
+
+{profile.email}
+
+
+{profile.phone || profile.contactNumber}
+
+
+Location: {profile.location || "—"}
+
+
+
+
+Education
+
+
+
+{(profile.education || profile.educations || []).slice(0,3).map((e, i) => (
+
+{e.degree || e.title} @ {e.institution || e.school} ({e.year || e.startYear}-{e.endYear || ""})
+
+))}
+
+
+
+
+
+Skills
+
+
+{Array.isArray(profile.skills) ? profile.skills.join(", ") : (profile.skills || "—")}
+
+
+
+
+) : (
+No profile details available.
+)}
+
+
+)}
+</>
+);
+};
+
+
+
 export default EmployerDashboard;
+
 
 
 
