@@ -1,0 +1,257 @@
+import React, { useEffect, useState } from "react";
+import { Button, Container, Row, Col, Card, Table, Modal, Form } from "react-bootstrap";
+import { BriefcaseFill, PencilSquare, PeopleFill, TrashFill, EyeFill } from "react-bootstrap-icons";
+import axios from "axios";
+import "bootstrap/dist/css/bootstrap.min.css";
+import "./Dashboard.css";
+
+
+const EmployerDashboard = () => {
+const [jobs, setJobs] = useState([]);
+const [showModal, setShowModal] = useState(false);
+const [editingJob, setEditingJob] = useState(null);
+const [applications, setApplications] = useState([]);
+const [showApplications, setShowApplications] = useState(false);
+
+
+const [formData, setFormData] = useState({
+title: "",
+description: "",
+location: "",
+salary: "",
+});
+
+
+// Fetch jobs posted by employer
+useEffect(() => {
+fetchJobs();
+}, []);
+
+
+const fetchJobs = async () => {
+try {
+const res = await axios.get("http://localhost:5000/api/Job");
+setJobs(res.data);
+} catch (err) {
+console.error("Error fetching jobs", err);
+}
+};
+
+
+const handleShowModal = (job = null) => {
+if (job) {
+setEditingJob(job);
+setFormData({ ...job });
+} else {
+setEditingJob(null);
+setFormData({ title: "", description: "", location: "", salary: "" });
+}
+setShowModal(true);
+};
+
+
+const handleCloseModal = () => setShowModal(false);
+
+
+const handleChange = (e) => {
+setFormData({ ...formData, [e.target.name]: e.target.value });
+};
+
+
+const handleSubmit = async () => {
+try {
+if (editingJob) {
+await axios.put(http://localhost:5000/api/Job/${editingJob.id}, formData);
+} else {
+await axios.post("http://localhost:5000/api/Job", formData);
+}
+fetchJobs();
+handleCloseModal();
+} catch (err) {
+console.error("Error saving job", err);
+}
+};
+
+
+const handleDelete = async (id) => {
+try {
+await axios.delete(http://localhost:5000/api/Job/${id});
+fetchJobs();
+} catch (err) {
+console.error("Error deleting job", err);
+}
+};
+
+
+const handleViewApplications = async (jobId) => {
+try {
+const res = await axios.get(http://localhost:5000/api/Application/job/${jobId});
+setApplications(res.data);
+setShowApplications(true);
+} catch (err) {
+console.error("Error fetching applications", err);
+}
+};
+
+
+const handleStatusChange = async (appId, newStatus) => {
+try {
+await axios.put(http://localhost:5000/api/Application/${appId}, { status: newStatus });
+// Update applications list after status change
+setApplications((prev) =>
+prev.map((app) => (app.id === appId ? { ...app, status: newStatus } : app))
+);
+} catch (err) {
+console.error("Error updating status", err);
+}
+};
+
+
+return (
+
+
+
+
+Employer Dashboard
+
+
+
+    {/* Dashboard Actions */}
+    <Row className="g-4 mb-4">
+      <Col md={4}>
+        <Card className="dashboard-card shadow-sm text-center p-4">
+          <BriefcaseFill size={40} className="mb-3 text-primary" />
+          <h4>Post a Job</h4>
+          <p>Create and publish new job listings to attract talent.</p>
+          <Button variant="primary" onClick={() => handleShowModal()}>Post Job</Button>
+        </Card>
+      </Col>
+    </Row>
+
+    {/* Jobs Table */}
+    <h3 className="mb-3">My Job Listings</h3>
+    <Table striped bordered hover>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Location</th>
+          <th>Salary</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {jobs.map((job) => (
+          <tr key={job.id}>
+            <td>{job.title}</td>
+            <td>{job.location}</td>
+            <td>{job.salary}</td>
+            <td>
+              <Button size="sm" variant="info" onClick={() => handleViewApplications(job.id)} className="me-2">
+                <PeopleFill /> Applications
+              </Button>
+              <Button size="sm" variant="warning" onClick={() => handleShowModal(job)} className="me-2">
+                <PencilSquare /> Edit
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => handleDelete(job.id)}>
+                <TrashFill /> Delete
+              </Button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </Table>
+
+    {/* Job Modal */}
+    <Modal show={showModal} onHide={handleCloseModal}>
+      <Modal.Header closeButton>
+        <Modal.Title>{editingJob ? "Edit Job" : "Post New Job"}</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        <Form>
+          <Form.Group className="mb-3">
+            <Form.Label>Job Title</Form.Label>
+            <Form.Control type="text" name="title" value={formData.title} onChange={handleChange} />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Label>Description</Form.Label>
+            <Form.Control as="textarea" rows={3} name="description" value={formData.description} onChange={handleChange} />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Label>Location</Form.Label>
+            <Form.Control type="text" name="location" value={formData.location} onChange={handleChange} />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Label>Salary</Form.Label>
+            <Form.Control type="number" name="salary" value={formData.salary} onChange={handleChange} />
+          </Form.Group>
+        </Form>
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="secondary" onClick={handleCloseModal}>Cancel</Button>
+        <Button variant="primary" onClick={handleSubmit}>{editingJob ? "Update" : "Post"}</Button>
+      </Modal.Footer>
+    </Modal>
+
+    {/* Applications Modal */}
+    <Modal show={showApplications} onHide={() => setShowApplications(false)} size="lg">
+      <Modal.Header closeButton>
+        <Modal.Title>Applications</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        {applications.length === 0 ? (
+          <p>No applications yet.</p>
+        ) : (
+          <Table bordered hover>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Resume</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {applications.map((app) => (
+                <tr key={app.id}>
+                  <td>{app.candidateName}</td>
+                  <td>{app.candidateEmail}</td>
+                  <td>{app.status}</td>
+                  <td>
+                    {app.resumeUrl ? (
+                      <a href={app.resumeUrl} target="_blank" rel="noreferrer">
+                        <EyeFill /> View Resume
+                      </a>
+                    ) : (
+                      "No resume"
+                    )}
+                  </td>
+                  <td>
+                    <Form.Select
+                      size="sm"
+                      value={app.status}
+                      onChange={(e) => handleStatusChange(app.id, e.target.value)}
+                    >
+                      <option value="Applied">Applied</option>
+                      <option value="Shortlisted">Shortlisted</option>
+                      <option value="Rejected">Rejected</option>
+                      <option value="Hired">Hired</option>
+                    </Form.Select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Modal.Body>
+    </Modal>
+  </Container>
+</div>
+
+
+
+);
+};
+
+
+export default EmployerDashboard;
